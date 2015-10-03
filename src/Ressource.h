@@ -16,8 +16,7 @@ using namespace std;
 namespace fs=boost::filesystem;
 
 
-enum class_type { t_Directory, t_Document, t_Text, t_Video, t_Image, t_Audio };
-
+enum class_type { t_Document, t_Text, t_Video, t_Image, t_Audio, t_Directory };
 
 class Ressource{
 	protected:
@@ -26,6 +25,7 @@ class Ressource{
 		uint16_t state;
 
 		string data;
+		string filename; ///Temporary filename
 		//deque<char> data; //needed ???.. or only on hardr drive ??
 		Metadata* metadata = NULL;
 
@@ -38,7 +38,9 @@ class Ressource{
 		}
 
 	public:
-        Ressource(){}
+        Ressource(){
+			metadata = new Metadata();
+		}
 
 		Ressource(uint64_t i, uint16_t c): id(i), class_type(c){
 			metadata = new Metadata( c, i);
@@ -48,8 +50,9 @@ class Ressource{
 			metadata = new Metadata( c, i);
 		}
 
-		~Ressource(){
-			delete metadata;
+		virtual ~Ressource(){
+			if( metadata != NULL)
+				delete metadata;
 		}
 
 		uint64_t getId(){ return id; }
@@ -64,47 +67,89 @@ class Ressource{
 		}
 		void setClass_type( uint16_t c ){ class_type = c; }
         void setState( uint16_t s ){ state = s; }
-        uint16_t getClassType(string contentType);
+        
+        void setMetadata( Metadata* m){
+			if( metadata != NULL)
+				delete metadata;
+			metadata = m;
+		}
+		
+        uint16_t contentType2ClassType(string contentType){
+			map<string, uint16_t> map_class_type={
+				{"application/javascript" , t_Text},
+				{"application/ogg"        , t_Video},
+				{"application/xhtml+xml"  , t_Text},
+				{"application/json"       , t_Text},
+				{"application/xml"        , t_Text},
+				{"application/x-directory", t_Directory},
+				{"inode/directory",			t_Directory	},
+				{"text/directory",    		t_Directory}
+			};
+			contentType = contentType.substr(0, contentType.find_first_of("/"));
+
+			if( contentType == "audio")
+				return t_Audio;
+			else if( contentType == "image")
+				return t_Image;
+			else if( contentType == "text")
+				return t_Text;
+			else if( contentType == "video")
+				return t_Video;
+
+			if( map_class_type.count(contentType) > 0)
+				return map_class_type[contentType];
+			else
+				return t_Document;
+		}
 
 		void setData( string d ){ data = d; }
-		string location(fs::path parent_dir);
-		string metadata_location(fs::path parent_dir);
+		void setFilename( string f ){ filename = f; }
+		
+		string location(const char* parent_dir){ return location( fs::path( parent_dir ) ); }
+		
+		string location(fs::path parent_dir){ ///We assume that parent_dir/class_type/ have already been created
+			ostringstream c;
+			c<<class_type;
+			parent_dir/=c.str();
 
-		string serialize(); ///network exchange purposes
-		void unserialize( string data);
+			ostringstream c1;
+			c1<<id;
+			parent_dir+=c1.str();
+			return parent_dir.c_str();
+		}
+		string metadata_location(fs::path parent_dir){
+			ostringstream c;
+			c<<class_type;
+			parent_dir/=c.str();
 
-		virtual void save(fs::path parent_dir);
-};
+			ostringstream c1;
+			c1<<id;
+			parent_dir+=c1.str()+".xml";
+			return parent_dir.c_str();
+		}
+		
+		///network exchange purposes
+		string serialize(){
+			ostringstream ofs;
+			boost::archive::text_oarchive oa( ofs );
+			oa << (*this);
+			return ofs.str();
+		}
+		 
+		void unserialize( string data){
+			istringstream ifs( data );
+			boost::archive::text_iarchive ia( ifs );
+			ia>>(*this);
+		}
 
-class SQLRessourceManager :public Manager {
-	public :
-		SQLRessourceManager(){}
-		~SQLRessourceManager(){}
-
-		string getTable(uint64_t class_type);
-		uint16_t getClass_type( string table);
-
-		void insert( Ressource& ressource);
-
-		/**
-		 * @brief assuming that all ressources have the same class_type => the argument
-		 */
-		void insert(uint16_t class_type, vector< Ressource* >& ressources );
-		//void insert( vector< Ressource& >& ressources );
-
-		Ressource get(uint16_t class_type, uint64_t id);
-		Ressource get(string table, uint64_t id);
-		vector<Ressource> get(uint16_t class_type, string fieldsNeeded, string where, string order, string limit);
-		vector<Ressource> get(string table, string fieldsNeeded, string where, string order, string limit);
-		vector<Ressource> get(uint16_t class_type, vector<uint64_t>& ids);
-		vector<Ressource> get(string table, vector<uint64_t>& ids);
-
-		//void update( Ressource& ressource);
-		//void update( vector< Ressource& >& ressources );
-
-
-		uint64_t count(uint16_t class_type, string where="", string order="", string limit="" );
-		uint64_t count(string table, string where="", string order="", string limit="" );
+		virtual void save(fs::path parent_dir){
+			cout<<"saving"<<endl;
+			metadata->write( metadata_location(parent_dir) );
+		}
+		
+		virtual void save(string parent_dir){ save( fs::path( parent_dir) ); } 
+		
+		virtual list< Ressource* > get_children(bool strict=true, list< Ressource* >acc=list< Ressource* >()){ return acc; }
 };
 
 #endif // RESSOURCE_H_INCLUDED
